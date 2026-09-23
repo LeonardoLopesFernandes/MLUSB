@@ -19,10 +19,12 @@ class _HomeScreenState extends State<HomeScreen> {
     return Scaffold(
       body: IndexedStack(
         index: _indice,
-        children: const [
-          FileManagerScreen(),
-          UtilitariosScreen(),
-          BackupScreen(),
+        children: [
+          FileManagerScreen(
+            aoIrParaUtilitarios: () => setState(() => _indice = 1),
+          ),
+          const UtilitariosScreen(),
+          const BackupScreen(),
         ],
       ),
       bottomNavigationBar: BottomNavigationBar(

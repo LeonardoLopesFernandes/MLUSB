@@ -8,13 +8,16 @@ import 'package:share_plus/share_plus.dart';
 
 import '../services/gerenciador_arquivos.dart';
 import '../services/permissao_utils.dart';
+import '../widgets/menu_lateral.dart';
 import '../widgets/modal_progresso.dart';
 import '../widgets/theme_widgets.dart';
 
 /// Gerenciador de arquivos com navegação e operações (copiar, colar,
 /// recortar, renomear, excluir, nova pasta, propriedades).
 class FileManagerScreen extends StatefulWidget {
-  const FileManagerScreen({super.key});
+  const FileManagerScreen({super.key, this.aoIrParaUtilitarios});
+
+  final VoidCallback? aoIrParaUtilitarios;
 
   @override
   State<FileManagerScreen> createState() => _FileManagerScreenState();
@@ -25,6 +28,10 @@ class _FileManagerScreenState extends State<FileManagerScreen> {
   String _caminhoAtual = '';
   bool _carregando = false;
   String? _mensagemErro;
+
+  // Modo de seleção múltipla.
+  final Set<String> _selecionados = {};
+  bool _modoSelecao = false;
 
   // Área de transferência (copiar/recortar).
   List<String> _itensTransferencia = [];
@@ -71,6 +78,151 @@ class _FileManagerScreenState extends State<FileManagerScreen> {
   Future<void> _navegarPara(String caminho) async {
     _caminhoAtual = caminho;
     await _recarregar();
+  }
+
+  void _limparSelecao() {
+    setState(() {
+      _selecionados.clear();
+      _modoSelecao = false;
+    });
+  }
+
+  void _alternarSelecao(String caminho) {
+    setState(() {
+      _modoSelecao = true;
+      if (_selecionados.contains(caminho)) {
+        _selecionados.remove(caminho);
+        if (_selecionados.isEmpty) _modoSelecao = false;
+      } else {
+        _selecionados.add(caminho);
+      }
+    });
+  }
+
+  List<String> _caminhosSelecionados() => _selecionados.toList();
+
+  void _prepararTransferencia(bool recortar) {
+    setState(() {
+      _itensTransferencia = _caminhosSelecionados();
+      _recortar = recortar;
+      _mensagemErro = recortar
+          ? '${_itensTransferencia.length} item(ns) pronto(s) para mover. '
+              'Use "Colar" na pasta de destino.'
+          : '${_itensTransferencia.length} item(ns) copiado(s). '
+              'Use "Colar" na pasta de destino.';
+    });
+    _limparSelecao();
+  }
+
+  Future<void> _renomearSelecionado() async {
+    final caminhos = _caminhosSelecionados();
+    if (caminhos.isEmpty) return;
+    if (caminhos.length > 1) {
+      _mostrarErro('Renomeie um item por vez.');
+      return;
+    }
+    final entidade = _entidades
+        .where((e) => e.path == caminhos.first)
+        .firstOrNull;
+    if (entidade != null) {
+      await _renomear(entidade);
+    }
+    _limparSelecao();
+  }
+
+  Future<void> _excluirSelecionados() async {
+    final caminhos = _caminhosSelecionados();
+    if (caminhos.isEmpty) return;
+    final confirmar = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Excluir'),
+        content: Text(
+          'Tem certeza de que deseja excluir ${caminhos.length} '
+          'item(ns) selecionado(s)?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancelar'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Excluir'),
+          ),
+        ],
+      ),
+    );
+    if (confirmar != true) return;
+    try {
+      for (final caminho in caminhos) {
+        await GerenciadorArquivos.excluir(caminho);
+      }
+      await _recarregar();
+    } catch (e) {
+      _mostrarErro('Erro ao excluir: $e');
+    }
+    _limparSelecao();
+  }
+
+  Future<void> _procurar() async {
+    final controller = TextEditingController();
+    final termo = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Procurar'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: const InputDecoration(labelText: 'Nome do arquivo'),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancelar'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, controller.text.trim()),
+            child: const Text('Procurar'),
+          ),
+        ],
+      ),
+    );
+    if (termo == null || termo.isEmpty) return;
+    setState(() {
+      _mensagemErro = null;
+      _carregando = true;
+    });
+    try {
+      final dir = Directory(_caminhoAtual);
+      final todos = await dir
+          .list(recursive: true, followLinks: false)
+          .toList();
+      final filtrados = todos
+          .where((e) =>
+              p.basename(e.path).toLowerCase().contains(termo.toLowerCase()))
+          .toList();
+      filtrados.sort((a, b) {
+        final aDir = a is Directory;
+        final bDir = b is Directory;
+        if (aDir != bDir) return aDir ? -1 : 1;
+        return a.path.toLowerCase().compareTo(b.path.toLowerCase());
+      });
+      if (!mounted) return;
+      setState(() {
+        _entidades = filtrados;
+        _carregando = false;
+        if (filtrados.isEmpty) {
+          _mensagemErro = 'Nenhum resultado encontrado para "$termo".';
+        }
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _carregando = false;
+        _mensagemErro = 'Erro ao procurar: $e';
+      });
+    }
   }
 
   Future<void> _selecionarPasta() async {
@@ -366,10 +518,155 @@ class _FileManagerScreenState extends State<FileManagerScreen> {
     await Share.shareXFiles([XFile(entidade.path)]);
   }
 
+  Widget _barraAcoesSelecao() {
+    Widget botao(IconData icone, String rotulo, VoidCallback onTap) {
+      return Expanded(
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(10),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 8),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(icone, size: 22, color: const Color(0xFF8B9BB4)),
+                const SizedBox(height: 4),
+                Text(
+                  rotulo,
+                  style: const TextStyle(
+                    color: Color(0xFF8B9BB4),
+                    fontSize: 11,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: const Color(0xFF151D2A),
+        border: Border.all(color: const Color(0xFF202B3D)),
+        borderRadius: BorderRadius.circular(14),
+        boxShadow: const [
+          BoxShadow(
+            color: Colors.black54,
+            blurRadius: 20,
+            offset: Offset(0, 8),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          botao(Icons.content_copy, 'Copiar', () {
+            _prepararTransferencia(false);
+          }),
+          botao(Icons.drive_file_move_outline, 'Mover', () {
+            _prepararTransferencia(true);
+          }),
+          botao(Icons.edit_outlined, 'Renomear', _renomearSelecionado),
+          botao(Icons.delete_outline, 'Excluir', _excluirSelecionados),
+          Expanded(
+            child: InkWell(
+              onTap: _limparSelecao,
+              borderRadius: BorderRadius.circular(10),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 3,
+                      ),
+                      decoration: BoxDecoration(
+                        gradient: const LinearGradient(
+                          colors: [Color(0xFF3B82F6), Color(0xFF2563EB)],
+                        ),
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: Text(
+                        '${_selecionados.length}',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 11,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    const Text(
+                      'Fechar',
+                      style: TextStyle(
+                        color: Color(0xFF8B9BB4),
+                        fontSize: 11,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.transparent,
+      appBar: AppBar(
+        backgroundColor: const Color(0xFF16203A),
+        foregroundColor: Colors.white,
+        title: const Text('MLUSB'),
+        centerTitle: true,
+        leading: Builder(
+          builder: (ctx) => IconButton(
+            icon: const Icon(Icons.menu),
+            onPressed: () => Scaffold.of(ctx).openDrawer(),
+          ),
+        ),
+      ),
+      drawer: MenuLateral(
+        aoRecarregar: _recarregar,
+        aoNovaPasta: _novaPasta,
+        aoProcurar: _procurar,
+        aoIrParaUtilitarios: () {
+          Navigator.pop(context);
+          widget.aoIrParaUtilitarios?.call();
+        },
+        aoSair: () async {
+          Navigator.pop(context);
+          final confirmar = await showDialog<bool>(
+            context: context,
+            builder: (ctx) => AlertDialog(
+              title: const Text('Saída'),
+              content: const Text('Deseja sair do app?'),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx, false),
+                  child: const Text('Cancelar'),
+                ),
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx, true),
+                  child: const Text('Sair'),
+                ),
+              ],
+            ),
+          );
+          if (confirmar == true) {
+            // ignore: use_build_context_synchronously
+            Navigator.of(context).pop();
+          }
+        },
+      ),
       body: SafeArea(
         child: Stack(
           children: [
@@ -468,50 +765,90 @@ class _FileManagerScreenState extends State<FileManagerScreen> {
                               child: Subtexto('Pasta vazia.', tamanho: 14),
                             )
                           : ListView.builder(
-                              padding: const EdgeInsets.all(8),
+                              padding: const EdgeInsets.only(
+                                top: 8,
+                                left: 8,
+                                right: 8,
+                                bottom: 80,
+                              ),
                               itemCount: _entidades.length,
                               itemBuilder: (ctx, i) {
                                 final entidade = _entidades[i];
                                 final isPasta = entidade is Directory;
                                 final nome = p.basename(entidade.path);
                                 final stat = entidade.statSync();
-                                return ListTile(
-                                  leading: Icon(
-                                    isPasta
-                                        ? Icons.folder
-                                        : Icons.insert_drive_file,
-                                    color: isPasta
-                                        ? const Color(0xFF4169E1)
-                                        : const Color(0xFF8E9FAE),
-                                  ),
-                                  title: Text(
-                                    nome,
-                                    style: const TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 14,
+                                final selecionado =
+                                    _selecionados.contains(entidade.path);
+                                return Container(
+                                  decoration: selecionado
+                                      ? const BoxDecoration(
+                                          color: Color(0xFF1E293B),
+                                          border: Border(
+                                            left: BorderSide(
+                                              color: Color(0xFF3B82F6),
+                                              width: 3,
+                                            ),
+                                          ),
+                                        )
+                                      : null,
+                                  child: ListTile(
+                                    leading: _modoSelecao
+                                        ? Checkbox(
+                                            value: selecionado,
+                                            activeColor:
+                                                const Color(0xFF3B82F6),
+                                            onChanged: (_) => _alternarSelecao(
+                                              entidade.path,
+                                            ),
+                                          )
+                                        : Icon(
+                                            isPasta
+                                                ? Icons.folder
+                                                : Icons.insert_drive_file,
+                                            color: isPasta
+                                                ? const Color(0xFF4169E1)
+                                                : const Color(0xFF8E9FAE),
+                                          ),
+                                    title: Text(
+                                      nome,
+                                      style: TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 14,
+                                        fontWeight: selecionado
+                                            ? FontWeight.w600
+                                            : FontWeight.normal,
+                                      ),
+                                      overflow: TextOverflow.ellipsis,
                                     ),
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                  subtitle: Text(
-                                    isPasta
-                                        ? GerenciadorArquivos.formatarData(
-                                            entidade)
-                                        : '${GerenciadorArquivos.formatarBytes(stat.size)}'
-                                            '  '
-                                            '${GerenciadorArquivos.formatarData(entidade)}',
-                                    style: const TextStyle(
-                                      color: Color(0xFF5D7182),
-                                      fontSize: 11,
+                                    subtitle: Text(
+                                      isPasta
+                                          ? GerenciadorArquivos.formatarData(
+                                              entidade)
+                                          : '${GerenciadorArquivos.formatarBytes(stat.size)}'
+                                              '  '
+                                              '${GerenciadorArquivos.formatarData(entidade)}',
+                                      style: const TextStyle(
+                                        color: Color(0xFF5D7182),
+                                        fontSize: 11,
+                                      ),
                                     ),
+                                    onTap: () {
+                                      if (_modoSelecao) {
+                                        _alternarSelecao(entidade.path);
+                                      } else if (isPasta) {
+                                        _navegarPara(entidade.path);
+                                      } else {
+                                        _compartilhar(entidade);
+                                      }
+                                    },
+                                    onLongPress: () {
+                                      if (!_modoSelecao) {
+                                        _alternarSelecao(entidade.path);
+                                      } else {
+                                        _abrirOperacoes(entidade);
+                                      }
+                                    },
                                   ),
-                                  onTap: () {
-                                    if (isPasta) {
-                                      _navegarPara(entidade.path);
-                                    } else {
-                                      _compartilhar(entidade);
-                                    }
-                                  },
-                                  onLongPress: () => _abrirOperacoes(entidade),
                                 );
                               },
                             ),
@@ -526,6 +863,13 @@ class _FileManagerScreenState extends State<FileManagerScreen> {
                 ),
               ],
             ),
+            if (_modoSelecao)
+              Positioned(
+                left: 16,
+                right: 16,
+                bottom: 16,
+                child: _barraAcoesSelecao(),
+              ),
             if (_processando)
               Positioned.fill(
                 child: ColoredBox(

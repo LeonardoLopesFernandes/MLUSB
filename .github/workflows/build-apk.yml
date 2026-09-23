@@ -1,0 +1,83 @@
+name: Gerar APK
+
+on:
+  push:
+    branches: [ main, master ]
+    tags: [ 'v*' ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Compilar APK (Release)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Fazer checkout do código
+        uses: actions/checkout@v4
+
+      - name: Instalar Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Instalar Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Verificar versões
+        run: |
+          flutter --version
+          java -version
+
+      - name: Baixar dependências
+        run: flutter pub get
+
+      - name: Configurar keystore a partir dos Secrets
+        run: |
+          RAW="${{ secrets.KEYSTORE_BASE64 }}"
+          CLEAN=$(echo "$RAW" | tr -d '\n\r\t ')
+          echo "$CLEAN" | base64 --decode > android/app/upload.keystore
+          echo "Keystore size: $(wc -c < android/app/upload.keystore) bytes"
+
+      - name: Verificar keystore
+        run: |
+          keytool -list -v -keystore android/app/upload.keystore \
+            -storepass "${{ secrets.KEYSTORE_PASSWORD }}" \
+            -alias "${{ secrets.KEY_ALIAS }}" \
+            -keypass "${{ secrets.KEY_PASSWORD }}" 2>&1
+
+      - name: Análise estática
+        run: flutter analyze
+
+      - name: Executar testes
+        run: flutter test
+
+      - name: Compilar APK Release assinado (arm64-v8a)
+        env:
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEYSTORE_PATH: upload.keystore
+        run: flutter build apk --release --split-per-abi --target-platform android-arm64
+
+      - name: Enviar APK como artefato
+        uses: actions/upload-artifact@v4
+        with:
+          name: mlusb-arm64-v8a
+          path: build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
+
+      - name: Publicar Release (GitHub Release)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: MLUSB ${{ github.ref_name }}
+          files: build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

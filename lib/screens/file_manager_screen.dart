@@ -3,7 +3,6 @@ import 'dart:io';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:path/path.dart' as p;
-import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 
 import '../services/gerenciador_arquivos.dart';
@@ -70,9 +69,8 @@ class _FileManagerScreenState extends State<FileManagerScreen> {
     _ordenacao = await PreferenciasArquivo.obterOrdenacao();
     _ordenacaoDecrescente = await PreferenciasArquivo.obterDecrescente();
     _filtroTipo = await PreferenciasArquivo.obterFiltro();
-    final dir = await getApplicationDocumentsDirectory();
     if (!mounted) return;
-    _caminhoAtual = dir.path;
+    _caminhoAtual = '/storage/emulated/0';
     await _recarregar();
   }
 

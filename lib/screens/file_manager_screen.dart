@@ -8,6 +8,8 @@ import 'package:share_plus/share_plus.dart';
 
 import '../services/gerenciador_arquivos.dart';
 import '../services/permissao_utils.dart';
+import '../services/preferencias_arquivo.dart';
+import '../widgets/dialogos_mlusb.dart';
 import '../widgets/menu_lateral.dart';
 import '../widgets/modal_progresso.dart';
 import '../widgets/theme_widgets.dart';
@@ -15,9 +17,14 @@ import '../widgets/theme_widgets.dart';
 /// Gerenciador de arquivos com navegação e operações (copiar, colar,
 /// recortar, renomear, excluir, nova pasta, propriedades).
 class FileManagerScreen extends StatefulWidget {
-  const FileManagerScreen({super.key, this.aoIrParaUtilitarios});
+  const FileManagerScreen({
+    super.key,
+    this.aoIrParaUtilitarios,
+    this.aoIrParaBackup,
+  });
 
   final VoidCallback? aoIrParaUtilitarios;
+  final VoidCallback? aoIrParaBackup;
 
   @override
   State<FileManagerScreen> createState() => _FileManagerScreenState();
@@ -25,9 +32,17 @@ class FileManagerScreen extends StatefulWidget {
 
 class _FileManagerScreenState extends State<FileManagerScreen> {
   List<FileSystemEntity> _entidades = [];
+  List<FileSystemEntity> _todos = [];
   String _caminhoAtual = '';
   bool _carregando = false;
   String? _mensagemErro;
+
+  // Preferências.
+  ModoExibicao _modoExibicao = ModoExibicao.lista;
+  double _tamanhoFonte = 14;
+  String _ordenacao = 'nome';
+  bool _ordenacaoDecrescente = false;
+  String _filtroTipo = 'todos';
 
   // Modo de seleção múltipla.
   final Set<String> _selecionados = {};
@@ -50,6 +65,11 @@ class _FileManagerScreenState extends State<FileManagerScreen> {
   }
 
   Future<void> _iniciar() async {
+    _modoExibicao = await PreferenciasArquivo.obterModo();
+    _tamanhoFonte = await PreferenciasArquivo.obterTamanhoFonte();
+    _ordenacao = await PreferenciasArquivo.obterOrdenacao();
+    _ordenacaoDecrescente = await PreferenciasArquivo.obterDecrescente();
+    _filtroTipo = await PreferenciasArquivo.obterFiltro();
     final dir = await getApplicationDocumentsDirectory();
     if (!mounted) return;
     _caminhoAtual = dir.path;
@@ -61,8 +81,9 @@ class _FileManagerScreenState extends State<FileManagerScreen> {
     try {
       final lista = await GerenciadorArquivos.listar(_caminhoAtual);
       if (!mounted) return;
+      _todos = lista;
       setState(() {
-        _entidades = lista;
+        _entidades = _aplicarFiltro(lista);
         _carregando = false;
         _mensagemErro = null;
       });
@@ -73,6 +94,39 @@ class _FileManagerScreenState extends State<FileManagerScreen> {
         _mensagemErro = 'Erro ao listar: $e';
       });
     }
+  }
+
+  List<FileSystemEntity> _aplicarFiltro(List<FileSystemEntity> lista) {
+    final filtrados = lista.where((e) {
+      final nome = p.basename(e.path);
+      if (e is Directory) return true;
+      return PreferenciasArquivo.correspondeFiltro(nome, _filtroTipo);
+    }).toList();
+
+    filtrados.sort((a, b) {
+      final aDir = a is Directory;
+      final bDir = b is Directory;
+      if (aDir != bDir) return aDir ? -1 : 1;
+      int resultado;
+      switch (_ordenacao) {
+        case 'tamanho':
+          resultado = _tamanho(a).compareTo(_tamanho(b));
+          break;
+        case 'data':
+          resultado = a.statSync().modified
+              .compareTo(b.statSync().modified);
+          break;
+        default:
+          resultado = a.path.toLowerCase().compareTo(b.path.toLowerCase());
+      }
+      return _ordenacaoDecrescente ? -resultado : resultado;
+    });
+    return filtrados;
+  }
+
+  int _tamanho(FileSystemEntity e) {
+    if (e is File) return e.lengthSync();
+    return 0;
   }
 
   Future<void> _navegarPara(String caminho) async {
@@ -232,6 +286,274 @@ class _FileManagerScreenState extends State<FileManagerScreen> {
     if (caminho == null || caminho.isEmpty) return;
     _caminhoAtual = caminho;
     await _recarregar();
+  }
+
+  Future<void> _modoExibicaoDialog() async {
+    final opcoes = {
+      'Lista': ModoExibicao.lista,
+      'Detalhes': ModoExibicao.detalhes,
+      'Ícones': ModoExibicao.icones,
+    };
+    final selecionado = await showDialog<ModoExibicao>(
+      context: context,
+      builder: (ctx) => SimpleDialog(
+        backgroundColor: const Color(0xFF151D2A),
+        title: const Text(
+          'Modo de exibição',
+          style: TextStyle(color: Color(0xFF4169E1)),
+        ),
+        children: opcoes.entries.map((e) {
+          return SimpleDialogOption(
+            onPressed: () => Navigator.pop(ctx, e.value),
+            child: Row(
+              children: [
+                Icon(
+                  e.value == ModoExibicao.icones
+                      ? Icons.grid_view
+                      : e.value == ModoExibicao.detalhes
+                          ? Icons.view_list
+                          : Icons.list,
+                  color: _modoExibicao == e.value
+                      ? const Color(0xFF4169E1)
+                      : const Color(0xFF8B9BB4),
+                ),
+                const SizedBox(width: 12),
+                Text(
+                  e.key,
+                  style: TextStyle(
+                    color: _modoExibicao == e.value
+                        ? Colors.white
+                        : const Color(0xFFE2E8F0),
+                  ),
+                ),
+              ],
+            ),
+          );
+        }).toList(),
+      ),
+    );
+    if (selecionado == null) return;
+    setState(() => _modoExibicao = selecionado);
+    await PreferenciasArquivo.salvarModo(selecionado);
+  }
+
+  Future<void> _tamanhoFonteDialog() async {
+    var valor = _tamanhoFonte;
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setLocalState) => AlertDialog(
+          backgroundColor: const Color(0xFF151D2A),
+          title: const Text(
+            'Tamanho da fonte',
+            style: TextStyle(color: Color(0xFF4169E1)),
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                valor.toStringAsFixed(0),
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: valor,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              Slider(
+                value: valor,
+                min: 10,
+                max: 24,
+                divisions: 7,
+                activeColor: const Color(0xFF4169E1),
+                onChanged: (v) => setLocalState(() => valor = v),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text(
+                'Cancelar',
+                style: TextStyle(color: Color(0xFF8B9BB4)),
+              ),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text(
+                'OK',
+                style: TextStyle(color: Color(0xFF4169E1)),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+    setState(() => _tamanhoFonte = valor);
+    await PreferenciasArquivo.salvarTamanhoFonte(valor);
+  }
+
+  Future<void> _organizarDialog() async {
+    var criterio = _ordenacao;
+    var decrescente = _ordenacaoDecrescente;
+    final resultado = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setLocalState) => AlertDialog(
+          backgroundColor: const Color(0xFF151D2A),
+          title: const Text(
+            'Organizar',
+            style: TextStyle(color: Color(0xFF4169E1)),
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text(
+                'Ordenar por',
+                style: TextStyle(color: Color(0xFF8B9BB4), fontSize: 13),
+              ),
+              const SizedBox(height: 8),
+              DropdownButton<String>(
+                value: criterio,
+                dropdownColor: const Color(0xFF1E293B),
+                items: const [
+                  DropdownMenuItem(value: 'nome', child: Text('Nome')),
+                  DropdownMenuItem(value: 'tamanho', child: Text('Tamanho')),
+                  DropdownMenuItem(value: 'data', child: Text('Data')),
+                ],
+                onChanged: (v) => setLocalState(() => criterio = v!),
+              ),
+              const SizedBox(height: 12),
+              SwitchListTile(
+                title: const Text('Decrescente',
+                    style: TextStyle(color: Colors.white)),
+                value: decrescente,
+                activeColor: const Color(0xFF4169E1),
+                onChanged: (v) => setLocalState(() => decrescente = v),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text(
+                'Cancelar',
+                style: TextStyle(color: Color(0xFF8B9BB4)),
+              ),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text(
+                'Aplicar',
+                style: TextStyle(color: Color(0xFF4169E1)),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (resultado != true) return;
+    setState(() {
+      _ordenacao = criterio;
+      _ordenacaoDecrescente = decrescente;
+      _entidades = _aplicarFiltro(_todos);
+    });
+    await PreferenciasArquivo.salvarOrdenacao(criterio, decrescente);
+  }
+
+  Future<void> _tipoArquivoDialog() async {
+    final filtros = {
+      'todos': 'Todos',
+      'audio': 'Áudio',
+      'video': 'Vídeo',
+      'imagem': 'Imagem',
+      'iso': 'ISO',
+      'documento': 'Documento',
+    };
+    final selecionado = await showDialog<String>(
+      context: context,
+      builder: (ctx) => SimpleDialog(
+        backgroundColor: const Color(0xFF151D2A),
+        title: const Text(
+          'Tipo de arquivo',
+          style: TextStyle(color: Color(0xFF4169E1)),
+        ),
+        children: filtros.entries.map((e) {
+          return SimpleDialogOption(
+            onPressed: () => Navigator.pop(ctx, e.key),
+            child: Row(
+              children: [
+                Icon(
+                  _iconeFiltro(e.key),
+                  color: _filtroTipo == e.key
+                      ? const Color(0xFF4169E1)
+                      : const Color(0xFF8B9BB4),
+                ),
+                const SizedBox(width: 12),
+                Text(
+                  e.value,
+                  style: const TextStyle(color: Color(0xFFE2E8F0)),
+                ),
+              ],
+            ),
+          );
+        }).toList(),
+      ),
+    );
+    if (selecionado == null) return;
+    setState(() {
+      _filtroTipo = selecionado;
+      _entidades = _aplicarFiltro(_todos);
+    });
+    await PreferenciasArquivo.salvarFiltro(selecionado);
+  }
+
+  IconData _iconeFiltro(String filtro) {
+    switch (filtro) {
+      case 'audio':
+        return Icons.music_note;
+      case 'video':
+        return Icons.movie;
+      case 'imagem':
+        return Icons.image;
+      case 'iso':
+        return Icons.disc_full;
+      case 'documento':
+        return Icons.description;
+      default:
+        return Icons.all_inbox;
+    }
+  }
+
+  Future<void> _excluirConteudoAtual() async {
+    final confirmar = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Excluir'),
+        content: Text(
+          'Deseja excluir o conteúdo da pasta atual '
+          '(${_entidades.length} item(ns))?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancelar'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Excluir'),
+          ),
+        ],
+      ),
+    );
+    if (confirmar != true) return;
+    try {
+      for (final e in _entidades) {
+        await GerenciadorArquivos.excluir(e.path);
+      }
+      await _recarregar();
+    } catch (e) {
+      _mostrarErro('Erro ao excluir: $e');
+    }
   }
 
   Future<void> _pedirPermissao() async {
@@ -636,8 +958,33 @@ class _FileManagerScreenState extends State<FileManagerScreen> {
       ),
       drawer: MenuLateral(
         aoRecarregar: _recarregar,
+        aoExcluir: _excluirConteudoAtual,
         aoNovaPasta: _novaPasta,
         aoProcurar: _procurar,
+        aoModoExibicao: _modoExibicaoDialog,
+        aoTamanhoFonte: _tamanhoFonteDialog,
+        aoOrganizar: _organizarDialog,
+        aoTipoArquivo: _tipoArquivoDialog,
+        aoAutoBackup: () {
+          Navigator.pop(context);
+          widget.aoIrParaBackup?.call();
+        },
+        aoSobre: () {
+          Navigator.pop(context);
+          DialogosMlusb.sobre(context);
+        },
+        aoConfiguracoes: () {
+          Navigator.pop(context);
+          DialogosMlusb.configuracoes(context);
+        },
+        aoExtensoes: () {
+          Navigator.pop(context);
+          DialogosMlusb.extensoes(context);
+        },
+        aoWebDav: () {
+          Navigator.pop(context);
+          DialogosMlusb.webDav(context);
+        },
         aoIrParaUtilitarios: () {
           Navigator.pop(context);
           widget.aoIrParaUtilitarios?.call();
@@ -813,25 +1160,28 @@ class _FileManagerScreenState extends State<FileManagerScreen> {
                                       nome,
                                       style: TextStyle(
                                         color: Colors.white,
-                                        fontSize: 14,
+                                        fontSize: _tamanhoFonte,
                                         fontWeight: selecionado
                                             ? FontWeight.w600
                                             : FontWeight.normal,
                                       ),
                                       overflow: TextOverflow.ellipsis,
                                     ),
-                                    subtitle: Text(
-                                      isPasta
-                                          ? GerenciadorArquivos.formatarData(
-                                              entidade)
-                                          : '${GerenciadorArquivos.formatarBytes(stat.size)}'
-                                              '  '
-                                              '${GerenciadorArquivos.formatarData(entidade)}',
-                                      style: const TextStyle(
-                                        color: Color(0xFF5D7182),
-                                        fontSize: 11,
-                                      ),
-                                    ),
+                                    subtitle: _modoExibicao ==
+                                            ModoExibicao.lista
+                                        ? null
+                                        : Text(
+                                            isPasta
+                                                ? GerenciadorArquivos
+                                                    .formatarData(entidade)
+                                                : '${GerenciadorArquivos.formatarBytes(stat.size)}'
+                                                    '  '
+                                                    '${GerenciadorArquivos.formatarData(entidade)}',
+                                            style: const TextStyle(
+                                              color: Color(0xFF5D7182),
+                                              fontSize: 11,
+                                            ),
+                                          ),
                                     onTap: () {
                                       if (_modoSelecao) {
                                         _alternarSelecao(entidade.path);

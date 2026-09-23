@@ -22,6 +22,7 @@ class _HomeScreenState extends State<HomeScreen> {
         children: [
           FileManagerScreen(
             aoIrParaUtilitarios: () => setState(() => _indice = 1),
+            aoIrParaBackup: () => setState(() => _indice = 2),
           ),
           const UtilitariosScreen(),
           const BackupScreen(),

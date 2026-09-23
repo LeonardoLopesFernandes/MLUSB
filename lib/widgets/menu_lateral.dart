@@ -6,15 +6,35 @@ class MenuLateral extends StatelessWidget {
   const MenuLateral({
     super.key,
     this.aoRecarregar,
+    this.aoExcluir,
     this.aoNovaPasta,
     this.aoProcurar,
+    this.aoModoExibicao,
+    this.aoTamanhoFonte,
+    this.aoOrganizar,
+    this.aoTipoArquivo,
+    this.aoAutoBackup,
+    this.aoSobre,
+    this.aoConfiguracoes,
+    this.aoExtensoes,
+    this.aoWebDav,
     this.aoIrParaUtilitarios,
     this.aoSair,
   });
 
   final VoidCallback? aoRecarregar;
+  final VoidCallback? aoExcluir;
   final VoidCallback? aoNovaPasta;
   final VoidCallback? aoProcurar;
+  final VoidCallback? aoModoExibicao;
+  final VoidCallback? aoTamanhoFonte;
+  final VoidCallback? aoOrganizar;
+  final VoidCallback? aoTipoArquivo;
+  final VoidCallback? aoAutoBackup;
+  final VoidCallback? aoSobre;
+  final VoidCallback? aoConfiguracoes;
+  final VoidCallback? aoExtensoes;
+  final VoidCallback? aoWebDav;
   final VoidCallback? aoIrParaUtilitarios;
   final VoidCallback? aoSair;
 
@@ -72,7 +92,7 @@ class MenuLateral extends StatelessWidget {
                   IconButton(
                     icon: const Icon(Icons.delete_outline, color: _textoMuted),
                     tooltip: 'Excluir',
-                    onPressed: () {},
+                    onPressed: aoExcluir,
                   ),
                 ],
               ),
@@ -99,6 +119,7 @@ class MenuLateral extends StatelessWidget {
                     titulo: 'WebDAV',
                     subtitulo: null,
                     caminho: '/WEB',
+                    onTap: aoWebDav,
                   ),
                   const SizedBox(height: 12),
                   // Menu de opções.
@@ -122,9 +143,17 @@ class MenuLateral extends StatelessWidget {
                           ),
                         ),
                         const Divider(height: 1, color: _borda),
-                        _itemMenu(Icons.grid_view, 'Modo de exibição', null),
-                        _itemMenu(Icons.format_size, 'Tamanho da fonte', null),
-                        _itemMenu(Icons.sort, 'Organizar', null),
+                        _itemMenu(
+                          Icons.grid_view,
+                          'Modo de exibição',
+                          aoModoExibicao,
+                        ),
+                        _itemMenu(
+                          Icons.format_size,
+                          'Tamanho da fonte',
+                          aoTamanhoFonte,
+                        ),
+                        _itemMenu(Icons.sort, 'Organizar', aoOrganizar),
                         _itemMenu(
                           Icons.create_new_folder,
                           'Nova pasta',
@@ -135,11 +164,31 @@ class MenuLateral extends StatelessWidget {
                           'Procurar',
                           aoProcurar,
                         ),
-                        _itemMenu(Icons.description_outlined, 'Tipo de arquivo', null),
-                        _itemMenu(Icons.backup_outlined, 'Auto Backup', null),
-                        _itemMenu(Icons.info_outline, 'Sobre o montador MLUSB', null),
-                        _itemMenu(Icons.settings_outlined, 'Configurações', null),
-                        _itemMenu(Icons.extension_outlined, 'Informações sobre extensões', null),
+                        _itemMenu(
+                          Icons.description_outlined,
+                          'Tipo de arquivo',
+                          aoTipoArquivo,
+                        ),
+                        _itemMenu(
+                          Icons.backup_outlined,
+                          'Auto Backup',
+                          aoAutoBackup,
+                        ),
+                        _itemMenu(
+                          Icons.info_outline,
+                          'Sobre o montador MLUSB',
+                          aoSobre,
+                        ),
+                        _itemMenu(
+                          Icons.settings_outlined,
+                          'Configurações',
+                          aoConfiguracoes,
+                        ),
+                        _itemMenu(
+                          Icons.extension_outlined,
+                          'Informações sobre extensões',
+                          aoExtensoes,
+                        ),
                         _itemMenu(
                           Icons.dns_outlined,
                           'Utilitários de disco',
@@ -167,47 +216,51 @@ class MenuLateral extends StatelessWidget {
     required String titulo,
     String? subtitulo,
     required String caminho,
+    VoidCallback? onTap,
   }) {
-    return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 12),
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: _fundoCard,
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Row(
-        children: [
-          Icon(icone, size: 32, color: _azulClaro),
-          const SizedBox(width: 16),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  titulo,
-                  style: const TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w500,
-                    color: Colors.white,
+    return InkWell(
+      onTap: onTap,
+      child: Container(
+        margin: const EdgeInsets.symmetric(horizontal: 12),
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: _fundoCard,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Row(
+          children: [
+            Icon(icone, size: 32, color: _azulClaro),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    titulo,
+                    style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w500,
+                      color: Colors.white,
+                    ),
                   ),
-                ),
-                if (subtitulo != null) ...[
+                  if (subtitulo != null) ...[
+                    const SizedBox(height: 2),
+                    Text(
+                      subtitulo,
+                      style: const TextStyle(fontSize: 13, color: _azulClaro),
+                    ),
+                  ],
                   const SizedBox(height: 2),
                   Text(
-                    subtitulo,
-                    style: const TextStyle(fontSize: 13, color: _azulClaro),
+                    caminho,
+                    style: const TextStyle(fontSize: 13, color: _textoMuted),
+                    overflow: TextOverflow.ellipsis,
                   ),
                 ],
-                const SizedBox(height: 2),
-                Text(
-                  caminho,
-                  style: const TextStyle(fontSize: 13, color: _textoMuted),
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ],
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }

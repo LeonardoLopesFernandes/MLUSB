@@ -2,6 +2,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:path/path.dart' as p;
 
+import '../services/detector_volumes.dart';
 import '../services/permissao_utils.dart';
 import '../services/utilitarios_disco.dart';
 import '../widgets/modal_progresso.dart';
@@ -17,6 +18,7 @@ class UtilitariosScreen extends StatefulWidget {
 
 class _UtilitariosScreenState extends State<UtilitariosScreen> {
   String? _caminhoAlvo;
+  List<VolumeArmazenamento> _volumes = [];
   bool _processando = false;
   double _progresso = 0;
   int _bytesLidos = 0;
@@ -24,15 +26,122 @@ class _UtilitariosScreenState extends State<UtilitariosScreen> {
   String? _tituloOperacao;
   String? _mensagemErro;
 
-  Future<void> _selecionarAlvo() async {
-    final caminho = await FilePicker.platform.getDirectoryPath(
-      dialogTitle: 'Selecione a pasta/dispositivo',
-    );
-    if (caminho == null || caminho.isEmpty) return;
+  @override
+  void initState() {
+    super.initState();
+    _carregarVolumes();
+  }
+
+  Future<void> _carregarVolumes() async {
+    final volumes = await DetectorVolumes.listarVolumes();
+    if (!mounted) return;
     setState(() {
-      _caminhoAlvo = caminho;
+      _volumes = volumes;
+      if (_caminhoAlvo == null && volumes.isNotEmpty) {
+        _caminhoAlvo = volumes.first.caminho;
+      }
+    });
+  }
+
+  Future<void> _selecionarAlvo() async {
+    final selecionado = await showDialog<String>(
+      context: context,
+      builder: (ctx) => SimpleDialog(
+        backgroundColor: const Color(0xFF151D2A),
+        title: const Text(
+          'Selecionar dispositivo',
+          style: TextStyle(color: Color(0xFF4169E1)),
+        ),
+        children: [
+          for (final volume in _volumes)
+            SimpleDialogOption(
+              onPressed: () => Navigator.pop(ctx, volume.caminho),
+              child: Row(
+                children: [
+                  Icon(
+                    _iconeVolume(volume),
+                    color: const Color(0xFF79A0EB),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          volume.rotulo,
+                          style: const TextStyle(color: Colors.white),
+                        ),
+                        Text(
+                          volume.caminho,
+                          style: const TextStyle(
+                            color: Color(0xFF64748B),
+                            fontSize: 12,
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ],
+                    ),
+                  ),
+                  if (volume.removivel)
+                    const Padding(
+                      padding: EdgeInsets.only(left: 8),
+                      child: Icon(
+                        Icons.usb,
+                        color: Color(0xFF4169E1),
+                        size: 18,
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          SimpleDialogOption(
+            onPressed: () async {
+              final caminho = await FilePicker.platform.getDirectoryPath(
+                dialogTitle: 'Selecione uma pasta manualmente',
+              );
+              if (caminho != null && caminho.isNotEmpty) {
+                // ignore: use_build_context_synchronously
+                Navigator.pop(ctx, caminho);
+              }
+            },
+            child: const Row(
+              children: [
+                Icon(Icons.folder_open, color: Color(0xFF79A0EB)),
+                SizedBox(width: 12),
+                Text('Selecionar manualmente...',
+                    style: TextStyle(color: Colors.white)),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+    if (selecionado == null || selecionado.isEmpty) return;
+    setState(() {
+      _caminhoAlvo = selecionado;
       _mensagemErro = null;
     });
+  }
+
+  IconData _iconeVolume(VolumeArmazenamento volume) {
+    switch (volume.tipo) {
+      case 'usb':
+        return Icons.usb;
+      case 'sdcard':
+        return Icons.sd_storage;
+      case 'webdav':
+        return Icons.cloud_outlined;
+      default:
+        return Icons.storage;
+    }
+  }
+
+  String _rotuloVolumeSelecionado() {
+    if (_caminhoAlvo == null) return 'Nenhum dispositivo';
+    for (final v in _volumes) {
+      if (v.caminho == _caminhoAlvo) return v.rotulo;
+    }
+    return 'Pasta manual';
   }
 
   Future<bool> _confirmar(String titulo, String mensagem) async {
@@ -119,6 +228,7 @@ class _UtilitariosScreenState extends State<UtilitariosScreen> {
       );
       _mostrarResultado(
         'Verificação concluída',
+        'Arquivos verificados: ${resultado.arquivos}\n'
         'Bytes lidos: '
         '${UtilitariosDisco.formatarBytes(resultado.bytesLidos)}\n'
         'Erros encontrados: ${resultado.erros}\n'
@@ -156,6 +266,7 @@ class _UtilitariosScreenState extends State<UtilitariosScreen> {
       );
       _mostrarResultado(
         'Apagamento concluído',
+        'Arquivos apagados: ${resultado.arquivos}\n'
         'Bytes apagados: '
         '${UtilitariosDisco.formatarBytes(resultado.bytesApagados)}\n'
         'Modo: ${rapido ? 'Rápido' : 'Completo'}',
@@ -292,13 +403,29 @@ class _UtilitariosScreenState extends State<UtilitariosScreen> {
                       Row(
                         children: [
                           Expanded(
-                            child: Text(
-                              _caminhoAlvo ?? 'Nenhum dispositivo selecionado',
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 13,
-                              ),
-                              overflow: TextOverflow.ellipsis,
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  _rotuloVolumeSelecionado(),
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                                const SizedBox(height: 2),
+                                Text(
+                                  _caminhoAlvo ??
+                                      'Nenhum dispositivo selecionado',
+                                  style: const TextStyle(
+                                    color: Color(0xFF64748B),
+                                    fontSize: 12,
+                                  ),
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ],
                             ),
                           ),
                           const SizedBox(width: 8),
@@ -307,6 +434,13 @@ class _UtilitariosScreenState extends State<UtilitariosScreen> {
                             onPressed: _selecionarAlvo,
                           ),
                         ],
+                      ),
+                      const SizedBox(height: 10),
+                      const Subtexto(
+                        'Conecte um HD/SSD/microSD via adaptador OTG para '
+                        'operar sobre o dispositivo externo. As operações '
+                        'atuam sobre os arquivos do volume selecionado.',
+                        tamanho: 11,
                       ),
                     ],
                   ),
